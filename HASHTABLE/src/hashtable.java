@@ -1,108 +1,66 @@
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicInteger;
 
-class hashtable {
+public class hashtable {
 
-    // username -> userId
-    private ConcurrentHashMap<String, Integer> usernameMap;
+    private ConcurrentHashMap<String, Integer> stockMap;
+    private ConcurrentHashMap<String, LinkedList<Integer>> waitingListMap;
 
-    // username -> attempt count
-    private ConcurrentHashMap<String, AtomicInteger> attemptMap;
-
-    // ✅ constructor (same name as class)
     public hashtable() {
-        usernameMap = new ConcurrentHashMap<>();
-        attemptMap = new ConcurrentHashMap<>();
+        stockMap = new ConcurrentHashMap<>();
+        waitingListMap = new ConcurrentHashMap<>();
     }
 
-    // Register username
-    public boolean register(String username, int userId) {
-        if (usernameMap.containsKey(username)) {
-            return false; // already taken
-        }
-        usernameMap.put(username, userId);
-        return true;
+    public void addProduct(String productId, int stock) {
+        stockMap.put(productId, stock);
+        waitingListMap.put(productId, new LinkedList<Integer>());
     }
 
-    // Check availability (O(1))
-    public boolean checkAvailability(String username) {
-
-        // update attempt count
-        attemptMap.putIfAbsent(username, new AtomicInteger(0));
-        attemptMap.get(username).incrementAndGet();
-
-        return !usernameMap.containsKey(username);
+    public String checkStock(String productId) {
+        if (!stockMap.containsKey(productId)) {
+            return "Product not found";
+        }
+        return stockMap.get(productId) + " units available";
     }
 
-    // Suggest alternatives
-    public List<String> suggestAlternatives(String username) {
-        List<String> list = new ArrayList<>();
-
-        // add numbers
-        for (int i = 1; i <= 5; i++) {
-            String temp = username + i;
-            if (!usernameMap.containsKey(temp)) {
-                list.add(temp);
-            }
+    public synchronized String purchaseItem(String productId, int userId) {
+        if (!stockMap.containsKey(productId)) {
+            return "Product not found";
         }
 
-        // replace underscore
-        if (username.contains("_")) {
-            String temp = username.replace("_", ".");
-            if (!usernameMap.containsKey(temp)) {
-                list.add(temp);
-            }
-        }
+        int stock = stockMap.get(productId);
 
-        // add suffix
-        String temp2 = username + "2026";
-        if (!usernameMap.containsKey(temp2)) {
-            list.add(temp2);
+        if (stock > 0) {
+            stockMap.put(productId, stock - 1);
+            return "Success, " + (stock - 1) + " units remaining";
+        } else {
+            LinkedList<Integer> queue = waitingListMap.get(productId);
+            queue.add(userId);
+            return "Added to waiting list, position #" + queue.size();
         }
-
-        return list;
     }
 
-    // Get most attempted username
-    public String getMostAttempted() {
-        String maxUser = "";
-        int max = 0;
-
-        for (Map.Entry<String, AtomicInteger> entry : attemptMap.entrySet()) {
-            int count = entry.getValue().get();
-
-            if (count > max) {
-                max = count;
-                maxUser = entry.getKey();
-            }
+    public void showWaitingList(String productId) {
+        if (!waitingListMap.containsKey(productId)) {
+            System.out.println("Product not found");
+            return;
         }
-
-        return maxUser + " (" + max + " attempts)";
+        System.out.println("Waiting List: " + waitingListMap.get(productId));
     }
 
-    // Main method
     public static void main(String[] args) {
-
         hashtable obj = new hashtable();
 
-        // Preload users
-        obj.register("john_doe", 1);
-        obj.register("admin", 2);
+        obj.addProduct("IPHONE15_256GB", 3);
 
-        // Check availability
-        System.out.println("john_doe -> " + obj.checkAvailability("john_doe"));
-        System.out.println("jane_smith -> " + obj.checkAvailability("jane_smith"));
+        System.out.println("checkStock(\"IPHONE15_256GB\") -> " + obj.checkStock("IPHONE15_256GB"));
 
-        // Suggestions
-        System.out.println("Suggestions: " + obj.suggestAlternatives("john_doe"));
+        System.out.println("purchaseItem(\"IPHONE15_256GB\", 12345) -> " + obj.purchaseItem("IPHONE15_256GB", 12345));
+        System.out.println("purchaseItem(\"IPHONE15_256GB\", 67890) -> " + obj.purchaseItem("IPHONE15_256GB", 67890));
+        System.out.println("purchaseItem(\"IPHONE15_256GB\", 11111) -> " + obj.purchaseItem("IPHONE15_256GB", 11111));
+        System.out.println("purchaseItem(\"IPHONE15_256GB\", 99999) -> " + obj.purchaseItem("IPHONE15_256GB", 99999));
+        System.out.println("purchaseItem(\"IPHONE15_256GB\", 88888) -> " + obj.purchaseItem("IPHONE15_256GB", 88888));
 
-        // simulate attempts
-        obj.checkAvailability("admin");
-        obj.checkAvailability("admin");
-        obj.checkAvailability("admin");
-
-        // Most attempted
-        System.out.println("Most attempted: " + obj.getMostAttempted());
+        obj.showWaitingList("IPHONE15_256GB");
     }
 }
