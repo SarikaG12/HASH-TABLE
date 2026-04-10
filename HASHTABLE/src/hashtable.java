@@ -1,50 +1,90 @@
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class hashtable {
 
-    HashMap<String, Integer> pageViews = new HashMap<>();
-    HashMap<String, HashSet<String>> uniqueVisitors = new HashMap<>();
-    HashMap<String, Integer> trafficSources = new HashMap<>();
+    class TokenBucket {
+        private int tokens;
+        private final int maxTokens;
+        private final double refillRatePerSecond;
+        private long lastRefillTime;
 
-    void processEvent(String url, String userId, String source) {
-        pageViews.put(url, pageViews.getOrDefault(url, 0) + 1);
+        public TokenBucket(int maxTokens, double refillRatePerSecond) {
+            this.maxTokens = maxTokens;
+            this.tokens = maxTokens;
+            this.refillRatePerSecond = refillRatePerSecond;
+            this.lastRefillTime = System.currentTimeMillis();
+        }
 
-        uniqueVisitors.putIfAbsent(url, new HashSet<>());
-        uniqueVisitors.get(url).add(userId);
+        private void refill() {
+            long currentTime = System.currentTimeMillis();
+            long elapsedMillis = currentTime - lastRefillTime;
 
-        trafficSources.put(source, trafficSources.getOrDefault(source, 0) + 1);
+            if (elapsedMillis > 0) {
+                double tokensToAdd = (elapsedMillis / 1000.0) * refillRatePerSecond;
+                if (tokensToAdd >= 1) {
+                    tokens = Math.min(maxTokens, tokens + (int) tokensToAdd);
+                    lastRefillTime = currentTime;
+                }
+            }
+        }
+
+        public synchronized String allowRequest() {
+            refill();
+
+            if (tokens > 0) {
+                tokens--;
+                return "Allowed (" + tokens + " requests remaining)";
+            } else {
+                long currentTime = System.currentTimeMillis();
+                double secondsForOneToken = 1.0 / refillRatePerSecond;
+                long retryAfter = (long) Math.ceil(secondsForOneToken);
+                return "Denied (0 requests remaining, retry after " + retryAfter + "s)";
+            }
+        }
+
+        public synchronized String getStatus() {
+            refill();
+            int used = maxTokens - tokens;
+            long resetTime = System.currentTimeMillis() / 1000 + (long) Math.ceil(tokens / refillRatePerSecond);
+
+            return "{used: " + used + ", limit: " + maxTokens + ", remaining: " + tokens +
+                    ", reset: " + resetTime + "}";
+        }
     }
 
-    void getDashboard() {
-        System.out.println("\nTop Pages:");
+    private ConcurrentHashMap<String, TokenBucket> clientBuckets;
+    private final int LIMIT = 1000;
+    private final double REFILL_RATE = 1000.0 / 3600.0; // 1000 tokens per hour
 
-        List<Map.Entry<String, Integer>> list = new ArrayList<>(pageViews.entrySet());
+    public hashtable() {
+        clientBuckets = new ConcurrentHashMap<>();
+    }
 
-        list.sort((a, b) -> b.getValue() - a.getValue());
+    public String checkRateLimit(String clientId) {
+        clientBuckets.putIfAbsent(clientId, new TokenBucket(LIMIT, REFILL_RATE));
+        return clientBuckets.get(clientId).allowRequest();
+    }
 
-        int i = 1;
-        for (Map.Entry<String, Integer> e : list) {
-            System.out.println(i + ". " + e.getKey() + " - " + e.getValue() +
-                    " views (" + uniqueVisitors.get(e.getKey()).size() + " unique)");
-            i++;
-            if (i > 10) break;
-        }
-
-        System.out.println("\nTraffic Sources:");
-        for (String s : trafficSources.keySet()) {
-            System.out.println(s + " -> " + trafficSources.get(s));
-        }
+    public String getRateLimitStatus(String clientId) {
+        clientBuckets.putIfAbsent(clientId, new TokenBucket(LIMIT, REFILL_RATE));
+        return clientBuckets.get(clientId).getStatus();
     }
 
     public static void main(String[] args) {
-
         hashtable obj = new hashtable();
 
-        obj.processEvent("/news", "u1", "Google");
-        obj.processEvent("/news", "u2", "Facebook");
-        obj.processEvent("/sports", "u3", "Direct");
-        obj.processEvent("/news", "u1", "Google");
+        System.out.println("checkRateLimit(clientId=\"abc123\") -> " + obj.checkRateLimit("abc123"));
+        System.out.println("checkRateLimit(clientId=\"abc123\") -> " + obj.checkRateLimit("abc123"));
+        System.out.println("checkRateLimit(clientId=\"abc123\") -> " + obj.checkRateLimit("abc123"));
 
-        obj.getDashboard();
+        System.out.println("getRateLimitStatus(\"abc123\") -> " + obj.getRateLimitStatus("abc123"));
+
+        for (int i = 0; i < 998; i++) {
+            obj.checkRateLimit("abc123");
+        }
+
+        System.out.println("checkRateLimit(clientId=\"abc123\") -> " + obj.checkRateLimit("abc123"));
+        System.out.println("getRateLimitStatus(\"abc123\") -> " + obj.getRateLimitStatus("abc123"));
     }
 }
