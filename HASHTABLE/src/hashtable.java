@@ -2,146 +2,120 @@ import java.util.*;
 
 public class hashtable {
 
-    class DNSEntry {
-        String domain;
-        String ipAddress;
-        long expiryTime;
+    // n-gram -> set of document ids
+    private HashMap<String, Set<String>> ngramIndex;
 
-        DNSEntry(String domain, String ipAddress, long ttlSeconds) {
-            this.domain = domain;
-            this.ipAddress = ipAddress;
-            this.expiryTime = System.currentTimeMillis() + (ttlSeconds * 1000);
-        }
+    // document id -> list of n-grams
+    private HashMap<String, List<String>> documentNgrams;
 
-        boolean isExpired() {
-            return System.currentTimeMillis() > expiryTime;
-        }
-
-        long getRemainingTTL() {
-            long remaining = (expiryTime - System.currentTimeMillis()) / 1000;
-            return Math.max(0, remaining);
-        }
+    // constructor
+    public hashtable() {
+        ngramIndex = new HashMap<>();
+        documentNgrams = new HashMap<>();
     }
 
-    private LinkedHashMap<String, DNSEntry> cache;
-    private int maxSize;
-    private int hits;
-    private int misses;
-    private long totalLookupTime;
+    // generate n-grams
+    public List<String> generateNGrams(String text, int n) {
+        List<String> ngrams = new ArrayList<>();
 
-    public hashtable(int maxSize) {
-        this.maxSize = maxSize;
-        this.hits = 0;
-        this.misses = 0;
-        this.totalLookupTime = 0;
+        String[] words = text.toLowerCase().replaceAll("[^a-z0-9 ]", "").split("\\s+");
 
-        cache = new LinkedHashMap<String, DNSEntry>(16, 0.75f, true) {
-            protected boolean removeEldestEntry(Map.Entry<String, DNSEntry> eldest) {
-                return size() > hashtable.this.maxSize;
+        for (int i = 0; i <= words.length - n; i++) {
+            StringBuilder sb = new StringBuilder();
+
+            for (int j = 0; j < n; j++) {
+                sb.append(words[i + j]);
+                if (j != n - 1) {
+                    sb.append(" ");
+                }
             }
-        };
-    }
 
-    public String resolve(String domain, long ttlSeconds) {
-        long start = System.nanoTime();
-
-        if (cache.containsKey(domain)) {
-            DNSEntry entry = cache.get(domain);
-
-            if (!entry.isExpired()) {
-                hits++;
-                long end = System.nanoTime();
-                totalLookupTime += (end - start);
-
-                return "Cache HIT -> " + entry.ipAddress + " (TTL remaining: " + entry.getRemainingTTL() + "s)";
-            } else {
-                cache.remove(domain);
-                System.out.println("Cache EXPIRED for " + domain);
-            }
+            ngrams.add(sb.toString());
         }
 
-        misses++;
-        String ip = queryUpstreamDNS(domain);
-        cache.put(domain, new DNSEntry(domain, ip, ttlSeconds));
-
-        long end = System.nanoTime();
-        totalLookupTime += (end - start);
-
-        return "Cache MISS -> Query upstream -> " + ip + " (TTL: " + ttlSeconds + "s)";
+        return ngrams;
     }
 
-    private String queryUpstreamDNS(String domain) {
-        if (domain.equals("google.com")) {
-            return "172.217.14.206";
-        } else if (domain.equals("youtube.com")) {
-            return "142.250.183.238";
-        } else if (domain.equals("github.com")) {
-            return "140.82.121.3";
-        } else {
-            return "192.168.1.1";
+    // add document to database
+    public void addDocument(String docId, String text, int n) {
+        List<String> ngrams = generateNGrams(text, n);
+        documentNgrams.put(docId, ngrams);
+
+        for (String gram : ngrams) {
+            ngramIndex.putIfAbsent(gram, new HashSet<String>());
+            ngramIndex.get(gram).add(docId);
         }
     }
 
-    public void removeExpiredEntries() {
-        Iterator<Map.Entry<String, DNSEntry>> it = cache.entrySet().iterator();
+    // analyze a new document
+    public void analyzeDocument(String docId, String text, int n) {
+        List<String> newDocNgrams = generateNGrams(text, n);
 
-        while (it.hasNext()) {
-            Map.Entry<String, DNSEntry> mapEntry = it.next();
-            if (mapEntry.getValue().isExpired()) {
-                it.remove();
+        HashMap<String, Integer> matchCount = new HashMap<>();
+
+        for (String gram : newDocNgrams) {
+            if (ngramIndex.containsKey(gram)) {
+                for (String existingDoc : ngramIndex.get(gram)) {
+                    matchCount.put(existingDoc, matchCount.getOrDefault(existingDoc, 0) + 1);
+                }
             }
         }
-    }
 
-    public String getCacheStats() {
-        int totalRequests = hits + misses;
-        double hitRate = 0.0;
-        double avgLookupTimeMs = 0.0;
+        System.out.println("Analyzing Document: " + docId);
+        System.out.println("Extracted " + newDocNgrams.size() + " n-grams");
 
-        if (totalRequests > 0) {
-            hitRate = (hits * 100.0) / totalRequests;
-            avgLookupTimeMs = (totalLookupTime / 1000000.0) / totalRequests;
-        }
-
-        return "Hit Rate: " + String.format("%.2f", hitRate) + "%, Avg Lookup Time: "
-                + String.format("%.4f", avgLookupTimeMs) + " ms";
-    }
-
-    public void displayCache() {
-        System.out.println("\nCurrent Cache:");
-        if (cache.isEmpty()) {
-            System.out.println("Cache is empty");
+        if (matchCount.isEmpty()) {
+            System.out.println("No matching documents found");
             return;
         }
 
-        for (Map.Entry<String, DNSEntry> entry : cache.entrySet()) {
-            System.out.println(entry.getKey() + " -> " + entry.getValue().ipAddress
-                    + " , TTL remaining: " + entry.getValue().getRemainingTTL() + "s");
+        String mostSimilarDoc = "";
+        int maxMatches = 0;
+
+        for (Map.Entry<String, Integer> entry : matchCount.entrySet()) {
+            String existingDoc = entry.getKey();
+            int matches = entry.getValue();
+
+            double similarity = (matches * 100.0) / newDocNgrams.size();
+
+            System.out.println("Found " + matches + " matching n-grams with \""
+                    + existingDoc + "\"");
+            System.out.println("Similarity: " + String.format("%.2f", similarity) + "%");
+
+            if (similarity >= 60) {
+                System.out.println("PLAGIARISM DETECTED");
+            } else if (similarity >= 15) {
+                System.out.println("Suspicious");
+            } else {
+                System.out.println("Low similarity");
+            }
+
+            System.out.println();
+
+            if (matches > maxMatches) {
+                maxMatches = matches;
+                mostSimilarDoc = existingDoc;
+            }
         }
+
+        double bestSimilarity = (maxMatches * 100.0) / newDocNgrams.size();
+        System.out.println("Most similar document: " + mostSimilarDoc);
+        System.out.println("Best similarity: " + String.format("%.2f", bestSimilarity) + "%");
     }
 
-    public static void main(String[] args) throws InterruptedException {
-        hashtable obj = new hashtable(3);
+    public static void main(String[] args) {
+        hashtable obj = new hashtable();
 
-        System.out.println(obj.resolve("google.com", 5));
-        System.out.println(obj.resolve("youtube.com", 8));
-        System.out.println(obj.resolve("google.com", 5));
+        String doc1 = "Artificial intelligence is transforming education by enabling personalized learning and automated assessment for students.";
+        String doc2 = "Artificial intelligence is transforming education by enabling personalized learning and automated assessment in universities.";
+        String doc3 = "Cloud computing provides scalable resources and services over the internet for organizations and businesses.";
 
-        obj.displayCache();
+        obj.addDocument("essay_089.txt", doc1, 5);
+        obj.addDocument("essay_092.txt", doc2, 5);
+        obj.addDocument("essay_050.txt", doc3, 5);
 
-        Thread.sleep(6000);
+        String newEssay = "Artificial intelligence is transforming education by enabling personalized learning and automated assessment for students in modern universities.";
 
-        System.out.println("\nAfter 6 seconds:");
-        System.out.println(obj.resolve("google.com", 5));
-
-        obj.removeExpiredEntries();
-        obj.displayCache();
-
-        System.out.println(obj.resolve("github.com", 10));
-        System.out.println(obj.resolve("hotmail.com", 10));
-
-        obj.displayCache();
-
-        System.out.println("\n" + obj.getCacheStats());
+        obj.analyzeDocument("essay_123.txt", newEssay, 5);
     }
 }
